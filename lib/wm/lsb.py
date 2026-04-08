@@ -3,16 +3,16 @@ lib/wm/lsb.py — LSB (Least Significant Bit) embedder.
 
 Математика:
   Embed:   carrier[i] = (signal[i] & ~mask) | (wm_group << lowest_bit)
-  Extract: wm_group   = (carrier[i] >> lowest_bit) & lsb_mask
+  Extract: wm_group   = (carrier[i] >> lowest_bit) & block_mask
 
-  где mask     = lsb_mask << lowest_bit
-      lsb_mask = (1 << lsb_n) - 1
-      wm_group — lsb_n последовательных бит ЦВЗ
+  где mask       = block_mask << lowest_bit
+      block_mask = (1 << block_len) - 1
+      wm_group   — block_len последовательных бит ЦВЗ
 
 Метод НЕ обратим: restored = carrier (оригинал восстановить нельзя).
 
-BPS  = lsb_n / redundancy  (теоретический максимум = lsb_n при redundancy=1)
-PSNR ≈ 20·log10(max_val / 2^lsb_n) — не зависит от содержимого ЦВЗ.
+BPS  = block_len / redundancy  (теоретический максимум = block_len при redundancy=1)
+PSNR ≈ 20·log10(max_val / 2^block_len) — не зависит от содержимого ЦВЗ.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class _LSBEngine:
     def __init__(
         self,
         *,
-        lsb_n: int,
+        block_len: int,
         lowest_bit: int,
         redundancy: int,
         shuffle: bool,
@@ -43,12 +43,12 @@ class _LSBEngine:
         wm_len: Optional[int],
         key: Optional[str],
     ) -> None:
-        if not (1 <= lsb_n <= 8):
-            raise InvalidConfig("lsb_n должен быть в [1, 8]")
+        if not (1 <= block_len <= 8):
+            raise InvalidConfig("block_len должен быть в [1, 8]")
         if lowest_bit < 0:
             raise InvalidConfig("lowest_bit должен быть >= 0")
 
-        self.lsb_n        = lsb_n
+        self.block_len    = block_len
         self.lowest_bit   = lowest_bit
         self.redundancy   = redundancy
         self.shuffle      = shuffle
@@ -82,10 +82,10 @@ class _LSBEngine:
         # Для float-сигналов проверка не нужна — пользователь сам контролирует lowest_bit.
         if signal.dtype.kind in ("i", "u"):
             safe_bits = np.iinfo(signal.dtype).bits - (1 if signal.dtype.kind == "i" else 0)
-            if self.lowest_bit + self.lsb_n > safe_bits:
+            if self.lowest_bit + self.block_len > safe_bits:
                 raise CantEmbed(
-                    f"lowest_bit({self.lowest_bit}) + lsb_n({self.lsb_n}) = "
-                    f"{self.lowest_bit + self.lsb_n} превышает разрядность сигнала {safe_bits}"
+                    f"lowest_bit({self.lowest_bit}) + lsb_n({self.block_len}) = "
+                    f"{self.lowest_bit + self.block_len} превышает разрядность сигнала {safe_bits}"
                 )
 
         coords  = self._get_coords(self.container)
@@ -96,7 +96,7 @@ class _LSBEngine:
 
         while wm_need > 0:
             wm_chunk     = wm_flat[wm_done:]
-            n_coords     = len(wm_chunk) // self.lsb_n   # точное деление — padding гарантирует
+            n_coords     = len(wm_chunk) // self.block_len   # точное деление — padding гарантирует
             coords_chunk = coords[coords_done : coords_done + n_coords]
 
             if coords_chunk.size == 0:
@@ -112,7 +112,7 @@ class _LSBEngine:
         if self.wm_len is None:
             self.wm_len = wm_done // self.redundancy
         self.watermark = self.watermark[: self.wm_len]
-        self.bps = self.wm_len / len(self.container) * self.lsb_n
+        self.bps = self.wm_len / len(self.container) * self.block_len
 
         return self.carrier
 
@@ -123,10 +123,10 @@ class _LSBEngine:
         coords = self._get_coords(self.carrier)
 
         if self.wm_len is None:
-            alloc = len(coords) * self.lsb_n
+            alloc = len(coords) * self.block_len
         else:
             alloc = self.wm_len * self.redundancy
-            alloc += (-alloc) % self.lsb_n    # выравниваем до кратного lsb_n
+            alloc += (-alloc) % self.block_len    # выравниваем до кратного lsb_n
 
         raw_wm = np.empty(alloc, dtype=np.uint8)
 
@@ -135,7 +135,7 @@ class _LSBEngine:
 
         while wm_need > 0:
             wm_chunk     = raw_wm[wm_done:]
-            n_coords     = len(wm_chunk) // self.lsb_n
+            n_coords     = len(wm_chunk) // self.block_len
             coords_chunk = coords[coords_done : coords_done + n_coords]
 
             if coords_chunk.size == 0:
@@ -167,31 +167,31 @@ class _LSBEngine:
         """
         n    = len(coords)
         s    = self.container[coords].astype(np.int64)
-        wm2d = wm_bits[: n * self.lsb_n].reshape(n, self.lsb_n).astype(np.int64)
+        wm2d = wm_bits[: n * self.block_len].reshape(n, self.block_len).astype(np.int64)
 
-        for i in range(self.lsb_n):
+        for i in range(self.block_len):
             bit_pos = self.lowest_bit + i
             mask    = np.int64(1) << bit_pos
             s       = (s & ~mask) | (wm2d[:, i] << bit_pos)
 
         self.carrier[coords] = s
-        return n * self.lsb_n
+        return n * self.block_len
 
     def _extract_chunk(self, wm_bits: NDArray, coords: NDArray) -> int:
         n = len(coords)
         s = self.carrier[coords].astype(np.int64)
 
-        bits2d = np.empty((n, self.lsb_n), dtype=np.uint8)
-        for i in range(self.lsb_n):
+        bits2d = np.empty((n, self.block_len), dtype=np.uint8)
+        for i in range(self.block_len):
             bits2d[:, i] = ((s >> (self.lowest_bit + i)) & 1).astype(np.uint8)
 
-        wm_bits[: n * self.lsb_n] = bits2d.ravel()
-        return n * self.lsb_n
+        wm_bits[: n * self.block_len] = bits2d.ravel()
+        return n * self.block_len
 
     def _preprocess_wm(self, wm: NDArray) -> NDArray:
         result = _wm_preprocess(wm, self.redundancy, self.shuffle, self._rng).astype(np.uint8)
         # Дополняем нулями до кратного lsb_n: каждый coord должен получить ровно lsb_n бит.
-        pad = (-len(result)) % self.lsb_n
+        pad = (-len(result)) % self.block_len
         if pad:
             result = np.pad(result, (0, pad))
         return result
@@ -205,7 +205,7 @@ class LSBEmbedder(WatermarkEmbedder):
     """LSB (Least Significant Bit) алгоритм встраивания / извлечения ЦВЗ.
 
     Args:
-        lsb_n:         Количество бит на сэмпл (1–8). Напрямую задаёт BPS и влияет на PSNR.
+        block_len:     Количество бит на сэмпл (1–8). Напрямую задаёт BPS и влияет на PSNR.
         lowest_bit:    Начальная позиция бита (0 = истинный LSB).
         redundancy:    Кратность дублирования ЦВЗ (мажоритарное голосование при извлечении).
         shuffle:       Перемешивать биты ЦВЗ (требует key для воспроизводимости).
@@ -221,7 +221,7 @@ class LSBEmbedder(WatermarkEmbedder):
     def __init__(
         self,
         *,
-        lsb_n: int = 1,
+        block_len: int = 1,
         lowest_bit: int = 0,
         redundancy: int = 1,
         shuffle: bool = False,
@@ -232,7 +232,7 @@ class LSBEmbedder(WatermarkEmbedder):
         metric_sink=None,
     ) -> None:
         super().__init__(log_level=log_level, metric_sink=metric_sink)
-        self._lsb_n         = lsb_n
+        self._block_len      = block_len
         self._lowest_bit    = lowest_bit
         self._redundancy    = redundancy
         self._shuffle       = shuffle
@@ -242,7 +242,7 @@ class LSBEmbedder(WatermarkEmbedder):
 
     def algo_params(self) -> dict[str, object]:
         return {
-            "lsb_n":      self._lsb_n,
+            "block_len":  self._block_len,
             "lowest_bit": self._lowest_bit,
             "redundancy": self._redundancy,
             "shuffle":    self._shuffle,
@@ -251,7 +251,7 @@ class LSBEmbedder(WatermarkEmbedder):
 
     def _make_engine(self, wm_len: Optional[int] = None) -> _LSBEngine:
         return _LSBEngine(
-            lsb_n=self._lsb_n,
+            block_len=self._block_len,
             lowest_bit=self._lowest_bit,
             redundancy=self._redundancy,
             shuffle=self._shuffle,
