@@ -8,14 +8,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 from numpy.typing import NDArray
 
 from .base import BaseRecord, ChannelView
 
 
 class EDFRecord(BaseRecord):
-    """Читает и пишет EDF / EDF+ файлы в цифровом (integer) режиме."""
+    """Читает и пишет EDF / EDF+ файлы"""
 
     def _load(self, path: Path) -> None:
         import pyedflib
@@ -30,13 +29,8 @@ class EDFRecord(BaseRecord):
 
         with pyedflib.EdfReader(str(path)) as r:
             self.duration = float(r.file_duration)
-            full_patient: str = r.patient.decode()
 
-        if full_patient:
-            self.file_type = "EDF"
-            self._header["patient_additional"] = full_patient.rstrip()
-        else:
-            self.file_type = "EDF+"
+        self.file_type = "EDF+" if r.filetype in (1, 2) else "EDF"
 
         self.signal_count = len(sig_headers)
         self.signal_labels = [h["label"] for h in sig_headers]

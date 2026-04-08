@@ -31,9 +31,7 @@ from lib.records.base import ChannelView
 from lib.wm.embedder import WatermarkEmbedder
 
 
-# ---------------------------------------------------------------------------
 # Исключения
-# ---------------------------------------------------------------------------
 
 class InvalidConfig(Exception):
     pass
@@ -45,9 +43,7 @@ class CantExtract(Exception):
     pass
 
 
-# ---------------------------------------------------------------------------
 # Внутренний движок
-# ---------------------------------------------------------------------------
 
 class _ITBEngine:
     """Низкоуровневый движок ITB.
@@ -90,7 +86,7 @@ class _ITBEngine:
             key = list(key.encode())
         return np.random.default_rng(key)
 
-    # ------------------------------------------------------------------ embed
+    # embed
 
     def embed(
         self,
@@ -134,7 +130,7 @@ class _ITBEngine:
 
         return self.carrier
 
-    # ---------------------------------------------------------------- extract
+    # extract
 
     def extract(self, signal: NDArray) -> NDArray:
         self.carrier  = np.array(signal)
@@ -171,13 +167,13 @@ class _ITBEngine:
 
         return self._postprocess_wm(raw_wm)
 
-    # ------------------------------------------------------------ coords
+    # coords
 
     def _get_coords(self, signal: NDArray) -> NDArray:
         """ITB работает с непрерывными индексами."""
         return np.arange(len(signal))
 
-    # ------------------------------------------------ embed chunk
+    # embed chunk
 
     def _embed_chunk(self, wm: NDArray, coords: NDArray) -> int:
         """
@@ -202,7 +198,7 @@ class _ITBEngine:
         self.carrier[coords] = x
         return chunk_len
 
-    # ---------------------------------------- extract chunk
+    # extract chunk
 
     def _extract_chunk(self, wm: NDArray, coords: NDArray) -> int:
         """
@@ -223,7 +219,7 @@ class _ITBEngine:
         self.restored[coords] = r
         return chunk_len
 
-    # ---------------------------------------- wm pre/post processing
+    # wm pre/post processing
 
     def _preprocess_wm(self, wm: NDArray) -> NDArray:
         """bits → packed uint8 (block_len=1 → 1:1), с redundancy и shuffle.
@@ -260,10 +256,6 @@ class _ITBEngine:
 
         return bits
 
-
-# ---------------------------------------------------------------------------
-# Публичный класс
-# ---------------------------------------------------------------------------
 
 class ITBEmbedder(WatermarkEmbedder):
     """ITB (Integer Transform-Based) алгоритм встраивания / извлечения ЦВЗ.

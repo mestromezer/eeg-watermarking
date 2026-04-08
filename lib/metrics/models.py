@@ -36,35 +36,33 @@ class ChannelMetrics:
         error:          Текст исключения, если операция завершилась с ошибкой.
     """
 
-    # --- идентификаторы (всегда заполнены) ---
+    # идентификаторы (всегда заполнены)
     filename: str
     channel_index: int
     channel_label: str
     algo: str
     operation: str
 
-    # --- параметры алгоритма ---
+    # параметры алгоритма
     algo_params: dict = field(default_factory=dict)
 
-    # --- основные метрики ---
+    # основные метрики
     wm_len: int = 0
     bps: float = 0.0
     elapsed_sec: float = 0.0
 
-    # --- качество сигнала ---
+    # качество сигнала
     embed_psnr: Optional[float] = None
     restore_psnr: Optional[float] = None
-
-    # --- точность ЦВЗ ---
     ber: Optional[float] = None
 
-    # --- сжатие ---
+    # сжатие
     comp_saving: Optional[float] = None
 
-    # --- служебное ---
+    # служебное
     error: str = ""
 
-    # ----------------------------------------------------------------- export
+    # export
 
     def as_flat_dict(self) -> dict:
         """Плоский словарь для записи в CSV.

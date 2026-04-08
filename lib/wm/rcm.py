@@ -18,9 +18,7 @@ from lib.records.base import ChannelView
 from lib.wm.embedder import WatermarkEmbedder
 
 
-# ---------------------------------------------------------------------------
 # Исключения
-# ---------------------------------------------------------------------------
 
 class InvalidConfig(Exception):
     pass
@@ -32,9 +30,7 @@ class CantExtract(Exception):
     pass
 
 
-# ---------------------------------------------------------------------------
 # Воспроизводимый RNG
-# ---------------------------------------------------------------------------
 
 class _RNG(np.random.Generator):
     def __init__(self, key: Optional[str | bytes | int | list] = None) -> None:
@@ -45,9 +41,7 @@ class _RNG(np.random.Generator):
         super().__init__(np.random.PCG64(key))
 
 
-# ---------------------------------------------------------------------------
 # Внутренний движок
-# ---------------------------------------------------------------------------
 
 class _RCMEngine:
     """Низкоуровневый движок RCM.
@@ -101,7 +95,7 @@ class _RCMEngine:
     def _rng(self) -> _RNG:
         return _RNG(self.key)
 
-    # ------------------------------------------------------------------ embed
+    # embed
 
     def embed(
         self,
@@ -146,7 +140,7 @@ class _RCMEngine:
 
         return self.carrier
 
-    # ---------------------------------------------------------------- extract
+    # extract
 
     def extract(self, signal: NDArray) -> NDArray:
         self.carrier  = np.array(signal)
@@ -186,7 +180,7 @@ class _RCMEngine:
 
         return self._postprocess_wm(raw_wm)
 
-    # ------------------------------------------------------------ coords
+    # coords
 
     def _get_coords(self, carr: NDArray) -> NDArray:
         c1 = np.arange(0, len(carr) - self.rcm_shift, self.rcm_shift + 1)
@@ -200,7 +194,7 @@ class _RCMEngine:
 
         return np.column_stack((c1, c2))
 
-    # ------------------------------------------------ embed chunk
+    # embed chunk
 
     def _embed_chunk(self, wm: NDArray, coords: NDArray) -> int:
         """
@@ -246,7 +240,7 @@ class _RCMEngine:
 
         return w.size
 
-    # ------------------------------------------ extract chunk
+    # extract chunk
 
     def _extract_chunk(self, wm: NDArray, coords: NDArray) -> int:
         c1 = coords[:, 0]
@@ -272,7 +266,7 @@ class _RCMEngine:
         self.restored[c2[filled]] = x2
         return w.size
 
-    # ---------------------------------------- wm pre/post processing
+    # wm pre/post processing
 
     def _preprocess_wm(self, wm: NDArray) -> NDArray:
         """bits → packed uint8 (block_len бит на элемент), с redundancy и shuffle."""
@@ -302,9 +296,7 @@ class _RCMEngine:
         return bits
 
 
-# ---------------------------------------------------------------------------
 # Bit packing helpers
-# ---------------------------------------------------------------------------
 
 def _bits_to_packed(bits: NDArray, *, bit_depth: int) -> NDArray:
     bps = 8  # uint8
@@ -325,10 +317,6 @@ def _packed_to_bits(data: NDArray, *, bit_depth: int) -> NDArray:
         bits = bits.reshape(-1, bps)[:, :bit_depth].flatten()
     return bits
 
-
-# ---------------------------------------------------------------------------
-# Публичный класс
-# ---------------------------------------------------------------------------
 
 class RCMEmbedder(WatermarkEmbedder):
     """RCM (Reversible Contrast Mapping) алгоритм встраивания / извлечения ЦВЗ.

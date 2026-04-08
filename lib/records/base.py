@@ -19,11 +19,6 @@ from numpy.typing import NDArray
 
 _log = logging.getLogger("wm.records")
 
-
-# ---------------------------------------------------------------------------
-# ChannelView
-# ---------------------------------------------------------------------------
-
 @dataclass
 class ChannelView:
     """Срез одного канала файла.
@@ -58,10 +53,6 @@ class ChannelView:
     def sample_count(self) -> int:
         return len(self.signal)
 
-
-# ---------------------------------------------------------------------------
-# BaseRecord
-# ---------------------------------------------------------------------------
 
 class BaseRecord(ABC):
     """Абстракция одного файла с временными рядами.
@@ -114,7 +105,7 @@ class BaseRecord(ABC):
         self._save(dest)
         self.log.info("Сохранено: %s", dest)
 
-    # ----------------------------------------------------------------- info
+    # info
 
     def all_channels(self) -> list[int]:
         """0-based индексы всех каналов."""

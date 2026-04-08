@@ -23,10 +23,6 @@ from lib.metrics.models import ChannelMetrics
 from lib.utils import signal_psnr, signal_ber
 
 
-# ---------------------------------------------------------------------------
-# Результаты операций
-# ---------------------------------------------------------------------------
-
 @dataclass
 class EmbedResult:
     """Результат встраивания ЦВЗ в один канал.
@@ -88,11 +84,9 @@ class ExtractResult:
         return signal_psnr(self.orig_signal, self.restored)
 
 
-# ---------------------------------------------------------------------------
 # ABC алгоритма
-# ---------------------------------------------------------------------------
 
-# Тип аргумента source: record или просто имя файла (для обратной совместимости)
+# Тип аргумента source: record или просто имя файла
 _Source = Union[BaseRecord, str]
 
 
@@ -127,7 +121,7 @@ class WatermarkEmbedder(ABC):
         self._log_level   = log_level
         self._base_log    = self._build_base_logger(log_level)
 
-    # ---------------------------------------------------------------- helpers
+    # helpers
 
     def _resolve_source(self, source: _Source) -> tuple[str, logging.LoggerAdapter]:
         """Вернуть (filename, logger) из record или строки."""
@@ -141,7 +135,7 @@ class WatermarkEmbedder(ABC):
         )
         return filename, adapter
 
-    # ------------------------------------------------------------------ embed
+    # embed
 
     def embed(
         self,
@@ -196,7 +190,7 @@ class WatermarkEmbedder(ABC):
             self._record_error("embed", channel, elapsed, str(exc), filename)
             raise
 
-    # --------------------------------------------------------------- extract
+    # extract
 
     def extract(
         self,
@@ -254,7 +248,7 @@ class WatermarkEmbedder(ABC):
             self._record_error("extract", channel, elapsed, str(exc), filename)
             raise
 
-    # ------------------------------------------------------------ abstract
+    # abstract
 
     @abstractmethod
     def _embed_channel(
@@ -281,7 +275,7 @@ class WatermarkEmbedder(ABC):
         """Параметры алгоритма для записи в метрики."""
         ...
 
-    # ---------------------------------------------------------- metrics write
+    # metrics write
 
     def _record_embed(self, result: EmbedResult, filename: str) -> None:
         if self._metric_sink is None:
@@ -337,7 +331,7 @@ class WatermarkEmbedder(ABC):
             error=error,
         ))
 
-    # ------------------------------------------------------------ logger
+    # logger
 
     def _build_base_logger(self, level: int) -> logging.Logger:
         """Базовый логгер без привязки к файлу.
