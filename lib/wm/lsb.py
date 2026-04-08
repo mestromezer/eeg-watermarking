@@ -112,7 +112,7 @@ class _LSBEngine:
         if self.wm_len is None:
             self.wm_len = wm_done // self.redundancy
         self.watermark = self.watermark[: self.wm_len]
-        self.bps = self.wm_len / len(self.container) * self.block_len
+        self.bps = self.wm_len / len(self.container)
 
         return self.carrier
 
