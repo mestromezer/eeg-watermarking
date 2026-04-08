@@ -89,7 +89,8 @@ class EmbedResult:
     @property
     def embed_psnr(self) -> float:
         """PSNR между оригинальным и модифицированным сигналом."""
-        return signal_psnr(self.channel.signal, self.carrier)
+        rng = self.channel.dig_max - self.channel.dig_min + 1
+        return signal_psnr(self.channel.signal, self.carrier, rng=rng)
 
 
 @dataclass
@@ -122,7 +123,8 @@ class ExtractResult:
     def restore_psnr(self) -> Optional[float]:
         if self.orig_signal is None:
             return None
-        return signal_psnr(self.orig_signal, self.restored)
+        rng = self.channel.dig_max - self.channel.dig_min + 1
+        return signal_psnr(self.orig_signal, self.restored, rng=rng)
 
 
 # ABC алгоритма
