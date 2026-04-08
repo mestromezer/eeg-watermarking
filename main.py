@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from lib.logging_setup import setup_logging
 from lib.records import load_record
-from lib.wm import RCMEmbedder, ITBEmbedder
+from lib.wm import RCMEmbedder, ITBEmbedder, LSBEmbedder
 from lib.metrics import CSVMetricSink
 from lib.utils import WatermarkGenerator
 
@@ -19,6 +19,7 @@ ALGOS = [
     RCMEmbedder(block_len=1, log_level=logging.INFO, metric_sink=sink, allow_partial=True),
     RCMEmbedder(block_len=4, log_level=logging.INFO, metric_sink=sink, allow_partial=True),
     ITBEmbedder(log_level=logging.INFO, metric_sink=sink, allow_partial=True),
+    LSBEmbedder(log_level=logging.INFO, lsb_n=2, lowest_bit=1)
 ]
 
 CHANNELS = [22,24,30,32,34,36,38,41,9,11,13,42,47,49,51,53,55,61,62,63]

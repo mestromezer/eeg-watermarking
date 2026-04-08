@@ -15,19 +15,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from lib.records.base import ChannelView
-from lib.wm.embedder import WatermarkEmbedder
-
-
-# Исключения
-
-class InvalidConfig(Exception):
-    pass
-
-class CantEmbed(Exception):
-    pass
-
-class CantExtract(Exception):
-    pass
+from lib.wm.embedder import WatermarkEmbedder, InvalidConfig, CantEmbed, CantExtract
 
 
 # Воспроизводимый RNG
@@ -388,20 +376,3 @@ class RCMEmbedder(WatermarkEmbedder):
             key=self._key,
         )
 
-    def _embed_channel(
-        self,
-        channel: ChannelView,
-        watermark: NDArray,
-    ) -> tuple[NDArray, NDArray, float, None]:
-        engine  = self._make_engine()
-        carrier = engine.embed(channel.signal, watermark, channel.dig_range)
-        return carrier, engine.watermark, float(engine.bps), None
-
-    def _extract_channel(
-        self,
-        channel: ChannelView,
-        wm_len: int,
-    ) -> tuple[NDArray, NDArray]:
-        engine    = self._make_engine(wm_len=wm_len)
-        extracted = engine.extract(channel.signal)
-        return extracted, engine.restored

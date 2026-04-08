@@ -23,6 +23,47 @@ from lib.metrics.models import ChannelMetrics
 from lib.utils import signal_psnr, signal_ber
 
 
+# ---------------------------------------------------------------------------
+# Shared wm helpers (используются всеми движками с bit-level обработкой)
+# ---------------------------------------------------------------------------
+
+def _wm_preprocess(wm: NDArray, redundancy: int, shuffle: bool, rng_fn) -> NDArray:
+    """Repetition coding + optional shuffle. Возвращает плоский массив бит."""
+    if redundancy > 1:
+        wm = np.repeat(wm, redundancy)
+    if shuffle:
+        rng_fn().shuffle(wm)
+    return wm
+
+
+def _wm_postprocess(bits: NDArray, wm_len: int, redundancy: int, shuffle: bool, rng_fn) -> NDArray:
+    """De-shuffle + majority vote. bits — плоский 0/1 uint8 длиной wm_len*redundancy."""
+    bits = bits[: wm_len * redundancy]
+    if shuffle:
+        n    = wm_len * redundancy
+        perm = rng_fn().permutation(n)
+        b    = np.empty_like(bits)
+        b[perm] = bits
+        bits = b
+    if redundancy > 1:
+        bits = bits.reshape(-1, redundancy)
+        c    = np.count_nonzero(bits, axis=1)
+        bits = np.where(c + c >= redundancy, 1, 0).astype(np.uint8)
+    return bits
+
+
+# Исключения алгоритмов встраивания
+
+class InvalidConfig(Exception):
+    pass
+
+class CantEmbed(Exception):
+    pass
+
+class CantExtract(Exception):
+    pass
+
+
 @dataclass
 class EmbedResult:
     """Результат встраивания ЦВЗ в один канал.
@@ -251,29 +292,30 @@ class WatermarkEmbedder(ABC):
     # abstract
 
     @abstractmethod
-    def _embed_channel(
-        self,
-        channel: ChannelView,
-        watermark: NDArray,
-    ) -> tuple[NDArray, NDArray, float, Optional[float]]: ...
-
-    @abstractmethod
-    def _extract_channel(
-        self,
-        channel: ChannelView,
-        wm_len: int,
-    ) -> tuple[NDArray, NDArray]:
-        """Реализация извлечения.
-
-        Returns:
-            ``(extracted_wm, restored_signal)``
-        """
-        ...
+    def _make_engine(self, wm_len: Optional[int] = None): ...
 
     @abstractmethod
     def algo_params(self) -> dict:
         """Параметры алгоритма для записи в метрики."""
         ...
+
+    def _embed_channel(
+        self,
+        channel: ChannelView,
+        watermark: NDArray,
+    ) -> tuple[NDArray, NDArray, float, Optional[float]]:
+        engine  = self._make_engine()
+        carrier = engine.embed(channel.signal, watermark, channel.dig_range)
+        return carrier, engine.watermark, float(engine.bps), None
+
+    def _extract_channel(
+        self,
+        channel: ChannelView,
+        wm_len: int,
+    ) -> tuple[NDArray, NDArray]:
+        engine    = self._make_engine(wm_len=wm_len)
+        extracted = engine.extract(channel.signal)
+        return extracted, engine.restored
 
     # metrics write
 

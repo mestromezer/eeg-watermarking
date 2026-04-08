@@ -28,19 +28,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from lib.records.base import ChannelView
-from lib.wm.embedder import WatermarkEmbedder
-
-
-# Исключения
-
-class InvalidConfig(Exception):
-    pass
-
-class CantEmbed(Exception):
-    pass
-
-class CantExtract(Exception):
-    pass
+from lib.wm.embedder import (
+    WatermarkEmbedder, InvalidConfig, CantEmbed, CantExtract,
+    _wm_preprocess, _wm_postprocess,
+)
 
 
 # Внутренний движок
@@ -222,39 +213,11 @@ class _ITBEngine:
     # wm pre/post processing
 
     def _preprocess_wm(self, wm: NDArray) -> NDArray:
-        """bits → packed uint8 (block_len=1 → 1:1), с redundancy и shuffle.
-
-        В оригинале: bits_to_ndarray(wm, dtype=uint8, bit_depth=1)
-        При dtype=uint8, bit_depth=1 это эквивалентно wm.astype(uint8) —
-        каждый бит хранится в отдельном uint8.
-        """
-        if self.redundancy > 1:
-            wm = np.repeat(wm, self.redundancy)
-        if self.shuffle:
-            self._rng().shuffle(wm)
-        return wm.astype(np.uint8)
+        return _wm_preprocess(wm, self.redundancy, self.shuffle, self._rng).astype(np.uint8)
 
     def _postprocess_wm(self, wm: NDArray) -> NDArray:
-        """packed uint8 (1 бит/элемент) → bits, с de-shuffle и majority vote.
-
-        В оригинале: to_bits(wm, bit_depth=1) при dtype=uint8 → wm & 1.
-        """
-        bits   = (wm & 1).astype(np.uint8)
-        wm_len = self.wm_len * self.redundancy
-        bits   = bits[:wm_len]
-
-        if self.shuffle:
-            perm        = self._rng().permutation(wm_len)
-            bits1       = np.empty_like(bits)
-            bits1[perm] = bits
-            bits        = bits1
-
-        if self.redundancy > 1:
-            bits = bits.reshape(-1, self.redundancy)
-            c    = np.count_nonzero(bits, axis=1)
-            bits = np.where(c + c >= self.redundancy, 1, 0).astype(np.uint8)
-
-        return bits
+        bits = (wm & 1).astype(np.uint8)
+        return _wm_postprocess(bits, self.wm_len, self.redundancy, self.shuffle, self._rng)
 
 
 class ITBEmbedder(WatermarkEmbedder):
@@ -308,20 +271,3 @@ class ITBEmbedder(WatermarkEmbedder):
             key=self._key,
         )
 
-    def _embed_channel(
-        self,
-        channel: ChannelView,
-        watermark: NDArray,
-    ) -> tuple[NDArray, NDArray, float, None]:
-        engine  = self._make_engine()
-        carrier = engine.embed(channel.signal, watermark, channel.dig_range)
-        return carrier, engine.watermark, float(engine.bps), None
-
-    def _extract_channel(
-        self,
-        channel: ChannelView,
-        wm_len: int,
-    ) -> tuple[NDArray, NDArray]:
-        engine    = self._make_engine(wm_len=wm_len)
-        extracted = engine.extract(channel.signal)
-        return extracted, engine.restored
