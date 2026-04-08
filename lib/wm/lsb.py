@@ -231,6 +231,10 @@ class LSBEmbedder(WatermarkEmbedder):
         log_level: int = logging.WARNING,
         metric_sink=None,
     ) -> None:
+        if not (1 <= block_len <= 8):
+            raise InvalidConfig("block_len должен быть в [1, 8]")
+        if lowest_bit < 0:
+            raise InvalidConfig("lowest_bit должен быть >= 0")
         super().__init__(log_level=log_level, metric_sink=metric_sink)
         self._block_len      = block_len
         self._lowest_bit    = lowest_bit

@@ -68,8 +68,11 @@ class _PEEEngine:
         wm_len: Optional[int],
         key: Optional[str],
     ) -> None:
-        if not (1 <= block_len <= 8):
-            raise InvalidConfig("block_len должен быть в [1, 8]")
+        # С левым соседом как предиктором block_len>1 вызывает геометрическое
+        # расхождение carrier: каждая модификация меняет pred следующего сэмпла,
+        # ошибка компаундируется с множителем 2^block_len.
+        if block_len != 1:
+            raise InvalidConfig("PEE с левым-соседом предиктором поддерживает только block_len=1")
 
         self.block_len    = block_len
         self.redundancy   = redundancy
@@ -230,6 +233,8 @@ class PEEEmbedder(WatermarkEmbedder):
         log_level: int = logging.WARNING,
         metric_sink=None,
     ) -> None:
+        if block_len != 1:
+            raise InvalidConfig("PEE с левым-соседом предиктором поддерживает только block_len=1")
         super().__init__(log_level=log_level, metric_sink=metric_sink)
         self._block_len     = block_len
         self._redundancy    = redundancy
