@@ -13,12 +13,12 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 from numpy.typing import NDArray
 
-from lib.records.base import ChannelView
+from lib.records.base import ChannelView, BaseRecord
 from lib.metrics.models import ChannelMetrics
 from lib.utils import signal_psnr, signal_ber
 
@@ -92,6 +92,10 @@ class ExtractResult:
 # ABC алгоритма
 # ---------------------------------------------------------------------------
 
+# Тип аргумента source: record или просто имя файла (для обратной совместимости)
+_Source = Union[BaseRecord, str]
+
+
 class WatermarkEmbedder(ABC):
     """Абстрактный базовый класс алгоритма встраивания / извлечения ЦВЗ.
 
@@ -100,22 +104,15 @@ class WatermarkEmbedder(ABC):
     делаются здесь, один раз.
 
     Args:
-        log_level:   Уровень логирования Python (``logging.DEBUG``, ``logging.INFO``, …).
+        log_level:   Уровень логирования Python.
         metric_sink: Объект с методом ``record(ChannelMetrics)``.
                      ``None`` — метрики не пишутся.
 
     Example::
 
-        from wm import RCMEmbedder
-        from metrics import CSVMetricSink
-        import logging
-
-        embedder = RCMEmbedder(
-            block_len=4,
-            log_level=logging.INFO,
-            metric_sink=CSVMetricSink("out/metrics.csv"),
-        )
-        result = embedder.embed(channel_view, watermark, filename="S001R01.edf")
+        result = embedder.embed(channel_view, watermark, source=rec)
+        # или для совместимости:
+        result = embedder.embed(channel_view, watermark, source="S001R01.edf")
     """
 
     codename: str = "unknown"
@@ -127,7 +124,22 @@ class WatermarkEmbedder(ABC):
         metric_sink=None,
     ) -> None:
         self._metric_sink = metric_sink
-        self._log = self._build_logger(log_level)
+        self._log_level   = log_level
+        self._base_log    = self._build_base_logger(log_level)
+
+    # ---------------------------------------------------------------- helpers
+
+    def _resolve_source(self, source: _Source) -> tuple[str, logging.LoggerAdapter]:
+        """Вернуть (filename, logger) из record или строки."""
+        if isinstance(source, BaseRecord):
+            filename = source.path.name if source.path else ""
+            return filename, source.log
+        # строка — обратная совместимость
+        filename = source
+        adapter  = logging.LoggerAdapter(
+            self._base_log, {"file": filename or "<unknown>"}
+        )
+        return filename, adapter
 
     # ------------------------------------------------------------------ embed
 
@@ -136,21 +148,21 @@ class WatermarkEmbedder(ABC):
         channel: ChannelView,
         watermark: NDArray,
         *,
-        filename: str = "",
+        source: _Source = "",
     ) -> EmbedResult:
         """Встроить ЦВЗ в один канал.
 
         Args:
             channel:   :class:`ChannelView` — канал-контейнер.
             watermark: Битовый массив ЦВЗ (uint8, значения 0/1).
-            filename:  Имя файла для метрик (опционально).
-
-        Returns:
-            :class:`EmbedResult`.
+            source:    :class:`~lib.records.base.BaseRecord` **или** имя файла
+                       ``str`` (для обратной совместимости).
         """
-        self._log.info(
-            "embed  файл=%s  канал=[%d] %s  wm_len=%d  сэмплов=%d",
-            filename or "—", channel.index, channel.label,
+        filename, log = self._resolve_source(source)
+
+        log.info(
+            "[%s] embed  канал=[%d] %s  wm_len=%d  сэмплов=%d",
+            self.codename, channel.index, channel.label,
             len(watermark), channel.sample_count,
         )
         t0 = time.perf_counter()
@@ -167,8 +179,9 @@ class WatermarkEmbedder(ABC):
                 comp_saving=comp_saving,
             )
 
-            self._log.info(
-                "embed  готово  bps=%.6f  psnr=%.2f dB  elapsed=%.3f с",
+            log.info(
+                "[%s] embed  готово  канал=[%d] %s  bps=%.6f  psnr=%.2f dB  elapsed=%.3f с",
+                self.codename, channel.index, channel.label,
                 bps, result.embed_psnr, elapsed,
             )
             self._record_embed(result, filename)
@@ -176,9 +189,9 @@ class WatermarkEmbedder(ABC):
 
         except Exception as exc:
             elapsed = time.perf_counter() - t0
-            self._log.error(
-                "embed  ошибка  файл=%s  канал=[%d] %s: %s",
-                filename or "—", channel.index, channel.label, exc,
+            log.error(
+                "[%s] embed  ошибка  канал=[%d] %s: %s",
+                self.codename, channel.index, channel.label, exc,
             )
             self._record_error("embed", channel, elapsed, str(exc), filename)
             raise
@@ -190,7 +203,7 @@ class WatermarkEmbedder(ABC):
         channel: ChannelView,
         wm_len: int,
         *,
-        filename: str = "",
+        source: _Source = "",
         orig_wm: Optional[NDArray] = None,
         orig_signal: Optional[NDArray] = None,
     ) -> ExtractResult:
@@ -199,16 +212,15 @@ class WatermarkEmbedder(ABC):
         Args:
             channel:     :class:`ChannelView` канала-носителя.
             wm_len:      Ожидаемая длина ЦВЗ в битах.
-            filename:    Имя файла для метрик (опционально).
+            source:      :class:`~lib.records.base.BaseRecord` **или** имя файла.
             orig_wm:     Оригинальный ЦВЗ для BER (опционально).
             orig_signal: Оригинальный сигнал для restore PSNR (опционально).
-
-        Returns:
-            :class:`ExtractResult`.
         """
-        self._log.info(
-            "extract  файл=%s  канал=[%d] %s  wm_len=%d",
-            filename or "—", channel.index, channel.label, wm_len,
+        filename, log = self._resolve_source(source)
+
+        log.info(
+            "[%s] extract  канал=[%d] %s  wm_len=%d",
+            self.codename, channel.index, channel.label, wm_len,
         )
         t0 = time.perf_counter()
         try:
@@ -224,20 +236,20 @@ class WatermarkEmbedder(ABC):
                 orig_signal=orig_signal,
             )
 
-            self._log.info(
-                "extract  готово  elapsed=%.3f с%s%s",
-                elapsed,
-                f"  ber={result.ber:.4f}"           if result.ber         is not None else "",
-                f"  restore_psnr={result.restore_psnr:.2f} dB" if result.restore_psnr is not None else "",
+            log.info(
+                "[%s] extract  готово  канал=[%d] %s  elapsed=%.3f с%s%s",
+                self.codename, channel.index, channel.label, elapsed,
+                f"  ber={result.ber:.4f}"                          if result.ber         is not None else "",
+                f"  restore_psnr={result.restore_psnr:.2f} dB"    if result.restore_psnr is not None else "",
             )
             self._record_extract(result, filename)
             return result
 
         except Exception as exc:
             elapsed = time.perf_counter() - t0
-            self._log.error(
-                "extract  ошибка  файл=%s  канал=[%d] %s: %s",
-                filename or "—", channel.index, channel.label, exc,
+            log.error(
+                "[%s] extract  ошибка  канал=[%d] %s: %s",
+                self.codename, channel.index, channel.label, exc,
             )
             self._record_error("extract", channel, elapsed, str(exc), filename)
             raise
@@ -249,14 +261,7 @@ class WatermarkEmbedder(ABC):
         self,
         channel: ChannelView,
         watermark: NDArray,
-    ) -> tuple[NDArray, NDArray, float, Optional[float]]:
-        """Реализация встраивания.
-
-        Returns:
-            ``(carrier, actual_wm, bps, comp_saving)``
-            Если алгоритм не сжимает — ``comp_saving = None``.
-        """
-        ...
+    ) -> tuple[NDArray, NDArray, float, Optional[float]]: ...
 
     @abstractmethod
     def _extract_channel(
@@ -334,15 +339,12 @@ class WatermarkEmbedder(ABC):
 
     # ------------------------------------------------------------ logger
 
-    def _build_logger(self, level: int) -> logging.Logger:
-        name = f"wm.{self.codename}"
-        logger = logging.getLogger(name)
-        if not logger.handlers:
-            h = logging.StreamHandler()
-            h.setFormatter(logging.Formatter(
-                "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-                datefmt="%H:%M:%S",
-            ))
-            logger.addHandler(h)
+    def _build_base_logger(self, level: int) -> logging.Logger:
+        """Базовый логгер без привязки к файлу.
+
+        Хендлер и форматтер настраиваются на уровне ``wm`` через
+        :func:`lib.logging_setup.setup_logging` — здесь только уровень.
+        """
+        logger = logging.getLogger(f"wm.{self.codename}")
         logger.setLevel(level)
         return logger
