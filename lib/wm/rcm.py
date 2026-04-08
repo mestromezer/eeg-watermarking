@@ -1,5 +1,8 @@
 """
 lib/wm/rcm.py — RCM (Reversible Contrast Mapping) embedder.
+
+Математика: пары сэмплов (x1, x2) → (y1, y2) через линейное преобразование,
+бит встраивается как смещение y1. Полностью обратимо.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ class CantExtract(Exception):
 # ---------------------------------------------------------------------------
 
 class _RNG(np.random.Generator):
-    def __init__(self, key: Optional[str | bytes | int] = None):
+    def __init__(self, key: Optional[str | bytes | int | list] = None) -> None:
         if isinstance(key, str):
             key = key.encode()
         if isinstance(key, bytes):
@@ -47,12 +50,13 @@ class _RNG(np.random.Generator):
 # ---------------------------------------------------------------------------
 
 class _RCMEngine:
-    """Низкоуровневый движок: chunk-loop + математика RCM.
+    """Низкоуровневый движок RCM.
 
-    Не является публичным API.
+    packed_block_type = np.uint8: ЦВЗ хранится как packed uint8,
+    где каждый элемент несёт block_len бит.
+    Цикл за один проход передаёт весь хвост wm[start:] в embed_chunk —
+    как в оригинальном make_wm_chunk при packed_block_type is not None.
     """
-
-    packed_block_type = np.uint8
 
     def __init__(
         self,
@@ -82,7 +86,7 @@ class _RCMEngine:
         self.wm_len         = wm_len
         self.key            = key
 
-        self.rcm_n   = 2 ** (self.block_len - 1)
+        self.rcm_n   = 2 ** (block_len - 1)
         self.rcm_mod = 2 * self.rcm_n + 1
         self.rcm_k1  = (self.rcm_n + 1) / self.rcm_mod
         self.rcm_k2  = self.rcm_n / self.rcm_mod
@@ -111,14 +115,16 @@ class _RCMEngine:
         self.carrier    = self.container.copy()
 
         coords = self._get_coords(self.container)
-        wm     = self._preprocess_wm(self.watermark)
+        # packed: каждый uint8 несёт block_len бит ЦВЗ
+        wm_packed = self._preprocess_wm(self.watermark)
 
-        wm_need     = len(wm)
-        wm_done     = 0
-        coords_done = 0
+        wm_need      = len(wm_packed)
+        wm_done      = 0
+        coords_done  = 0
 
         while wm_need > 0:
-            wm_chunk     = wm[wm_done:]
+            # make_wm_chunk при packed_block_type: wm[start:] — весь хвост
+            wm_chunk     = wm_packed[wm_done:]
             coords_chunk = coords[coords_done : coords_done + len(wm_chunk)]
 
             if coords_chunk.size == 0:
@@ -127,7 +133,7 @@ class _RCMEngine:
                 raise CantEmbed("Insufficient container length")
 
             done         = self._embed_chunk(wm_chunk, coords_chunk)
-            done        *= self.block_len
+            # done = число packed uint8 (не умножаем на block_len — packed path)
             coords_done += len(coords_chunk)
             wm_done     += done
             wm_need     -= done
@@ -135,7 +141,8 @@ class _RCMEngine:
         if self.wm_len is None:
             self.wm_len = wm_done // self.redundancy
         self.watermark = self.watermark[: self.wm_len]
-        self.bps       = self.wm_len / len(self.container) * self.block_len
+        # bps: wm_len / n_samples * block_len (packed path)
+        self.bps = self.wm_len / len(self.container) * self.block_len
 
         return self.carrier
 
@@ -147,14 +154,18 @@ class _RCMEngine:
 
         coords = self._get_coords(self.carrier)
 
+        # alloc: ceil(wm_len * redundancy / block_len) packed uint8
         if self.wm_len is None:
-            raw_wm = self._alloc_wm(len(coords) * self.block_len)
+            alloc_bits = len(coords) * self.block_len
         else:
-            raw_wm = self._alloc_wm(self.wm_len * self.redundancy)
+            alloc_bits = self.wm_len * self.redundancy
+        raw_wm = np.empty(
+            int(np.ceil(alloc_bits / self.block_len)), dtype=np.uint8
+        )
 
-        wm_need     = len(raw_wm)
-        wm_done     = 0
-        coords_done = 0
+        wm_need      = len(raw_wm)
+        wm_done      = 0
+        coords_done  = 0
 
         while wm_need > 0:
             wm_chunk     = raw_wm[wm_done:]
@@ -166,7 +177,6 @@ class _RCMEngine:
                 raise CantExtract("Could not find watermark with given length")
 
             done         = self._extract_chunk(wm_chunk, coords_chunk)
-            done        *= self.block_len
             coords_done += len(coords_chunk)
             wm_done     += done
             wm_need     -= done
@@ -176,7 +186,7 @@ class _RCMEngine:
 
         return self._postprocess_wm(raw_wm)
 
-    # ---------------------------------------------------- RCM: coords
+    # ------------------------------------------------------------ coords
 
     def _get_coords(self, carr: NDArray) -> NDArray:
         c1 = np.arange(0, len(carr) - self.rcm_shift, self.rcm_shift + 1)
@@ -190,22 +200,28 @@ class _RCMEngine:
 
         return np.column_stack((c1, c2))
 
-    # ------------------------------------------------ RCM: embed chunk
+    # ------------------------------------------------ embed chunk
 
     def _embed_chunk(self, wm: NDArray, coords: NDArray) -> int:
+        """
+        wm: packed uint8, каждый элемент = block_len бит.
+        coords: пары (c1, c2), shape (N, 2).
+        Возвращает число обработанных packed-элементов.
+        """
         c1 = coords[:, 0]
         c2 = coords[:, 1]
         x1 = self.container[c1].astype(np.int64)
         x2 = self.container[c2].astype(np.int64)
         n  = self.rcm_n
+
         y1 = (n + 1) * x1 - n * x2
         y2 = (n + 1) * x2 - n * x1
 
-        min2 = self.carr_range[0]
-        max2 = self.carr_range[1]
-        min1 = min2 + n
-        max1 = max2 - n
-        embeddable = (min1 <= y1) & (y1 <= max1) & (min2 <= y2) & (y2 <= max2)
+        lo, hi = self.carr_range
+        min1   = lo + n
+        max1   = hi - n
+        embeddable = (min1 <= y1) & (y1 <= max1) & (lo <= y2) & (y2 <= hi)
+
         y1e = y1[embeddable]
         y2e = y2[embeddable]
         x1n = x1[~embeddable]
@@ -219,19 +235,18 @@ class _RCMEngine:
         if x1n.size > 0:
             if not self.rcm_skip:
                 raise CantEmbed("range overflow and rcm_skip is off")
-
-            r       = (x1n - x2n) % self.rcm_mod
-            v1      = x1n - r
-            v1_fits = (min2 <= v1) & (v1 <= max2)
-            v2      = v1 + self.rcm_mod
-            v2_fits = (min2 <= v2) & (v2 <= max2)
+            r        = (x1n - x2n) % self.rcm_mod
+            v1       = x1n - r
+            v1_fits  = (lo <= v1) & (v1 <= hi)
+            v2       = v1 + self.rcm_mod
+            v2_fits  = (lo <= v2) & (v2 <= hi)
             if not (v1_fits | v2_fits).all():
                 raise CantEmbed("range overflow when trying to skip")
             self.carrier[c1[~embeddable]] = np.where(v1_fits, v1, v2)
 
         return w.size
 
-    # ---------------------------------------------- RCM: extract chunk
+    # ------------------------------------------ extract chunk
 
     def _extract_chunk(self, wm: NDArray, coords: NDArray) -> int:
         c1 = coords[:, 0]
@@ -240,16 +255,13 @@ class _RCMEngine:
         y2 = self.carrier[c2].astype(np.int64)
         w  = (y1 - y2) % self.rcm_mod
 
-        if self.rcm_skip:
-            filled = w != 0
-        else:
-            filled = np.ones_like(w, dtype=bool)
+        filled = (w != 0) if self.rcm_skip else np.ones_like(w, dtype=bool)
 
         w  = w[filled]
         y1 = y1[filled]
         y2 = y2[filled]
 
-        wm[: w.size] = (w - 1).astype(self.packed_block_type)
+        wm[: w.size] = (w - 1).astype(np.uint8)
 
         w[w > self.rcm_n] -= self.rcm_mod
         y1 -= w
@@ -262,11 +274,8 @@ class _RCMEngine:
 
     # ---------------------------------------- wm pre/post processing
 
-    def _alloc_wm(self, size: int) -> NDArray:
-        packed_size = int(np.ceil(size / self.block_len))
-        return np.empty(packed_size, dtype=self.packed_block_type)
-
     def _preprocess_wm(self, wm: NDArray) -> NDArray:
+        """bits → packed uint8 (block_len бит на элемент), с redundancy и shuffle."""
         if self.redundancy > 1:
             wm = np.repeat(wm, self.redundancy)
         if self.shuffle:
@@ -274,23 +283,23 @@ class _RCMEngine:
         return _bits_to_packed(wm, bit_depth=self.block_len)
 
     def _postprocess_wm(self, wm: NDArray) -> NDArray:
-        wm = _packed_to_bits(wm, bit_depth=self.block_len)
-
-        wm_len = self.wm_len * self.redundancy
-        wm     = wm[:wm_len]
+        """packed uint8 → bits, с de-shuffle и majority vote."""
+        bits    = _packed_to_bits(wm, bit_depth=self.block_len)
+        wm_len  = self.wm_len * self.redundancy
+        bits    = bits[:wm_len]
 
         if self.shuffle:
-            perm      = self._rng().permutation(wm_len)
-            wm1       = np.empty_like(wm)
-            wm1[perm] = wm
-            wm        = wm1
+            perm       = self._rng().permutation(wm_len)
+            bits1      = np.empty_like(bits)
+            bits1[perm] = bits
+            bits        = bits1
 
         if self.redundancy > 1:
-            wm = wm.reshape(-1, self.redundancy)
-            c  = np.count_nonzero(wm, axis=1)
-            wm = np.where(c + c >= self.redundancy, 1, 0)
+            bits = bits.reshape(-1, self.redundancy)
+            c    = np.count_nonzero(bits, axis=1)
+            bits = np.where(c + c >= self.redundancy, 1, 0).astype(np.uint8)
 
-        return wm
+        return bits
 
 
 # ---------------------------------------------------------------------------
@@ -298,20 +307,19 @@ class _RCMEngine:
 # ---------------------------------------------------------------------------
 
 def _bits_to_packed(bits: NDArray, *, bit_depth: int) -> NDArray:
-    dtype = np.dtype(np.uint8)
-    bps   = dtype.itemsize * 8
+    bps = 8  # uint8
     if bit_depth != bps:
-        pad_width = bit_depth - (len(bits) % bit_depth)
-        if pad_width != bit_depth:
-            bits = np.pad(bits, (0, pad_width))
+        pad = bit_depth - (len(bits) % bit_depth)
+        if pad != bit_depth:
+            bits = np.pad(bits, (0, pad))
         bits = bits.reshape(-1, bit_depth)
-        pad  = np.zeros((len(bits), bps - bit_depth), dtype=np.uint8)
-        bits = np.hstack((bits, pad)).ravel()
-    return np.packbits(bits, bitorder=sys.byteorder).view(dtype)
+        pad2 = np.zeros((len(bits), bps - bit_depth), dtype=np.uint8)
+        bits = np.hstack((bits, pad2)).ravel()
+    return np.packbits(bits, bitorder=sys.byteorder).view(np.uint8)
 
 
 def _packed_to_bits(data: NDArray, *, bit_depth: int) -> NDArray:
-    bps  = data.dtype.itemsize * 8
+    bps  = 8
     bits = np.unpackbits(data.view(np.uint8), bitorder=sys.byteorder)
     if bit_depth != bps:
         bits = bits.reshape(-1, bps)[:, :bit_depth].flatten()
@@ -323,7 +331,7 @@ def _packed_to_bits(data: NDArray, *, bit_depth: int) -> NDArray:
 # ---------------------------------------------------------------------------
 
 class RCMEmbedder(WatermarkEmbedder):
-    """RCM-алгоритм встраивания / извлечения ЦВЗ.
+    """RCM (Reversible Contrast Mapping) алгоритм встраивания / извлечения ЦВЗ.
 
     Args:
         rcm_shift:      Фиксированный сдвиг между сэмплами пары.
@@ -332,9 +340,9 @@ class RCMEmbedder(WatermarkEmbedder):
         block_len:      Бит на блок (1–8).
         redundancy:     Кратность дублирования ЦВЗ.
         shuffle:        Перемешивать биты ЦВЗ.
-        contiguous:     Последовательные координаты.
+        contiguous:     Последовательные координаты (иначе случайные).
         allow_partial:  Допускать частичное встраивание.
-        key:            Ключ (сид) для ГПСЧ.
+        key:            Ключ для ГПСЧ.
         log_level:      Уровень логирования.
         metric_sink:    Куда писать метрики.
     """
@@ -367,7 +375,7 @@ class RCMEmbedder(WatermarkEmbedder):
         self._allow_partial  = allow_partial
         self._key            = key
 
-    def algo_params(self) -> dict:
+    def algo_params(self) -> dict[str, object]:
         return {
             "rcm_shift":      self._rcm_shift,
             "rcm_rand_shift": self._rcm_rand_shift,

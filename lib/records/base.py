@@ -73,6 +73,8 @@ class BaseRecord(ABC):
     - ``signal_count``  — число каналов
     - ``duration``      — длительность в секундах
     - ``signal_labels`` — список меток каналов
+    - ``log``           — :class:`logging.LoggerAdapter`, привязанный к файлу;
+                          используется внутри record и передаётся в embedder
 
     Субклассы реализуют:
 
@@ -88,15 +90,19 @@ class BaseRecord(ABC):
         self.signal_count: int = 0
         self.duration: float = 0.0
         self.signal_labels: list[str] = []
+        # До load() — безликий адаптер; после load() пересоздаётся с именем файла
+        self.log: logging.LoggerAdapter = logging.LoggerAdapter(_log, {"file": "<unknown>"})
 
     # ------------------------------------------------------------------ I/O
 
     def load(self, path: str | Path) -> None:
         """Загрузить файл с диска."""
         self.path = Path(path)
-        _log.info("Загрузка %s", self.path)
+        # Адаптер с именем файла — используется везде в record и embedder
+        self.log = logging.LoggerAdapter(_log, {"file": self.path.name})
+        self.log.info("Загрузка")
         self._load(self.path)
-        _log.info(
+        self.log.info(
             "Загружено: %s  каналов=%d  длительность=%.1f с",
             self.file_type, self.signal_count, self.duration,
         )
@@ -104,9 +110,9 @@ class BaseRecord(ABC):
     def save(self, path: str | Path) -> None:
         """Сохранить (возможно изменённые) сигналы на диск."""
         dest = Path(path)
-        _log.info("Сохранение в %s", dest)
+        self.log.info("Сохранение в %s", dest)
         self._save(dest)
-        _log.info("Сохранено: %s", dest)
+        self.log.info("Сохранено: %s", dest)
 
     # ----------------------------------------------------------------- info
 

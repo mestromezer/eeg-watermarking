@@ -6,15 +6,12 @@ records/edf.py — реализация BaseRecord для формата EDF / E
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 
 from .base import BaseRecord, ChannelView
-
-_log = logging.getLogger("wm.records.edf")
 
 
 class EDFRecord(BaseRecord):
@@ -44,7 +41,7 @@ class EDFRecord(BaseRecord):
         self.signal_count = len(sig_headers)
         self.signal_labels = [h["label"] for h in sig_headers]
 
-        _log.debug(
+        self.log.debug(
             "EDF загружен: %d каналов, длительность %.1f с, метки: %s",
             self.signal_count, self.duration, self.signal_labels,
         )
@@ -73,5 +70,5 @@ class EDFRecord(BaseRecord):
         )
 
     def update_channel(self, index: int, signal: NDArray) -> None:
-        _log.debug("Обновление канала %d (%s)", index, self.signal_labels[index])
+        self.log.debug("Обновление канала %d (%s)", index, self.signal_labels[index])
         self._signals[index] = signal
