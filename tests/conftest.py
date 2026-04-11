@@ -5,6 +5,7 @@ from lib.wm.rcm import RCMEmbedder
 from lib.wm.itb import ITBEmbedder
 from lib.wm.lsb import LSBEmbedder
 from lib.wm.pee import PEEEmbedder
+from lib.wm.hs import HSEmbedder
 
 
 N       = 4000
@@ -53,6 +54,8 @@ ALGO_CASES = [
     pytest.param(LSBEmbedder,  {"shuffle": True, "key": "k"}, id="lsb-shuffle"),
     pytest.param(PEEEmbedder,  {},                          id="pee-default"),
     pytest.param(PEEEmbedder,  {"shuffle": True, "key": "k"}, id="pee-shuffle"),
+    pytest.param(HSEmbedder,   {},                          id="hs-default"),
+    pytest.param(HSEmbedder,   {"shuffle": True, "key": "k"}, id="hs-shuffle"),
 ]
 
-REVERSIBLE = [RCMEmbedder, ITBEmbedder, PEEEmbedder]
+REVERSIBLE = [RCMEmbedder, ITBEmbedder, PEEEmbedder, HSEmbedder]
