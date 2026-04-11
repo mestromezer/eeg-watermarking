@@ -17,8 +17,8 @@ wm   = WatermarkGenerator(seed="key").bits(50000)
 
 ALGOS = [
     PEEEmbedder(allow_partial=True),                                  # left-neighbour (default)
-    PEEEmbedder(allow_partial=True, predictor=LagrangePredictor(2)),  # Lagrange order 2
-    HSEmbedder(allow_partial=True),                                   # histogram shifting
+    HSEmbedder(allow_partial=True),                                   # histogram shifting, left-neighbour
+    HSEmbedder(allow_partial=True, predictor=LagrangePredictor(2)),   # histogram shifting, Lagrange order 2
     ITBEmbedder(log_level=logging.INFO, metric_sink=sink, allow_partial=True),
     RCMEmbedder(block_len=1, log_level=logging.INFO, metric_sink=sink, allow_partial=True),
     RCMEmbedder(block_len=4, log_level=logging.INFO, metric_sink=sink, allow_partial=True),

@@ -5,10 +5,13 @@ lib/wm/pee.py — PEE (Prediction Error Expansion) embedder.
   Extract: e' = x'_i − p_i;  wm_val = e' & mask;  x_i = p_i + (e' >> block_len)
 
 Predictor is pluggable via _Predictor interface.
-Both embed and extract predict from the original / causally-restored signal
-(not from the growing modified carrier), which keeps the recurrence stable for
-any predictor order — including Lagrange extrapolation whose characteristic root
-would otherwise be |r| > 1 and cause exponential divergence.
+The embed loop predicts from the already-modified carrier (canonical PEE, Thodi &
+Rodriguez 2007). For LeftNeighbourPredictor this creates an implicit second-difference
+recursion (D[i] ≈ bit − D[i-1], |root|=1), keeping errors small and BPS high.
+
+Lagrange extrapolation is NOT compatible with this causal approach: its characteristic
+equation has a root |r| ≈ 2.4 > 1 causing exponential divergence. Use HSEmbedder
+with LagrangePredictor instead.
 """
 
 from __future__ import annotations
@@ -90,13 +93,11 @@ class _PEEEngine:
         n_cap  = len(wm_values)
         first  = self.predictor.order
 
-        # Predict from the original signal so errors are bounded for any predictor.
-        # Extract mirrors this by predicting from the causally restored signal.
         wm_done = 0
         for i in range(first, n):
             if wm_done >= n_cap:
                 break
-            pred    = self.predictor.predict_one(cont, i)
+            pred    = self.predictor.predict_one(carr, i)
             e       = int(cont[i]) - pred
             new_val = pred + (e << self.block_len) + int(wm_values[wm_done])
             if not (lo <= new_val <= hi):
@@ -118,44 +119,39 @@ class _PEEEngine:
         return self.carrier
 
     def extract(self, signal: NDArray) -> NDArray:
-        """Causal extraction: predict from the already-restored prefix at each step.
+        self.carrier  = np.array(signal)
+        self.restored = self.carrier.copy()
 
-        This is the inverse of the embed loop (which predicts from the original signal).
-        Once position i-1 is restored, predict_one(restored, i) == predict_one(orig, i).
-        """
-        n     = len(signal)
-        c     = signal.astype(np.int64)
+        n     = len(self.carrier)
+        c     = self.carrier.astype(np.int64)
         mask  = np.int64((1 << self.block_len) - 1)
         first = self.predictor.order
+        p     = self.predictor.predict_all(c)
 
-        if self.wm_len is not None:
+        if self.wm_len is None:
+            n_values = n - first
+        else:
             bits_needed = self.wm_len * self.redundancy
             n_values    = int(np.ceil(bits_needed / self.block_len))
-            if n_values > n - first:
-                if not self.allow_partial:
-                    raise CantExtract(f"Недостаточно сэмплов для wm_len={self.wm_len}")
-                n_values = n - first
-        else:
+
+        if n_values > n - first:
+            if not self.allow_partial:
+                raise CantExtract(f"Недостаточно сэмплов для wm_len={self.wm_len}")
             n_values = n - first
 
-        restored   = c.copy()
-        wm_values  = []
+        idx     = np.arange(first, first + n_values)
+        e_prime = c[idx] - p[idx]
 
-        for i in range(first, first + n_values):
-            pred    = self.predictor.predict_one(restored, i)
-            ep      = int(c[i]) - pred
-            wm_values.append(int(ep & mask))
-            restored[i] = pred + (ep >> self.block_len)
+        wm_values = (e_prime & mask).astype(np.uint8)
+        e_orig    = e_prime >> self.block_len
 
-        self.restored = restored.astype(signal.dtype)
+        self.restored[idx] = (p[idx] + e_orig).astype(signal.dtype)
 
         if self.wm_len is None:
             self.wm_len = (n_values * self.block_len) // self.redundancy
 
         bits_needed = self.wm_len * self.redundancy
-        raw_bits    = _unpack_bits(
-            np.array(wm_values, dtype=np.int64), self.block_len
-        )[:bits_needed]
+        raw_bits    = _unpack_bits(wm_values.astype(np.int64), self.block_len)[:bits_needed]
         return _wm_postprocess(raw_bits, self.wm_len, self.redundancy, self.shuffle, self._rng)
 
 
@@ -189,13 +185,20 @@ class PEEEmbedder(WatermarkEmbedder):
     ) -> None:
         if block_len != 1:
             raise InvalidConfig("PEE поддерживает только block_len=1")
+        predictor = predictor if predictor is not None else LeftNeighbourPredictor()
+        if isinstance(predictor, LagrangePredictor):
+            raise InvalidConfig(
+                "LagrangePredictor is incompatible with PEE: causal extrapolation "
+                "from the modified carrier is numerically unstable (characteristic "
+                "root |r| ≈ 2.4 > 1). Use HSEmbedder(predictor=LagrangePredictor(n)) instead."
+            )
         super().__init__(log_level=log_level, metric_sink=metric_sink)
         self._block_len     = block_len
         self._redundancy    = redundancy
         self._shuffle       = shuffle
         self._allow_partial = allow_partial
         self._key           = key
-        self._predictor     = predictor if predictor is not None else LeftNeighbourPredictor()
+        self._predictor     = predictor
 
     def algo_params(self) -> dict[str, object]:
         return {
