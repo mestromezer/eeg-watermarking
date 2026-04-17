@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from lib.logging_setup import setup_logging
 from lib.records import load_record
-from lib.wm import RCMEmbedder, ITBEmbedder, PEEEmbedder, HSEmbedder, LagrangePredictor
+from lib.wm import RCMEmbedder, ITBEmbedder, PEEEmbedder
 from lib.metrics import CSVMetricSink
 from lib.utils import WatermarkGenerator
 
@@ -16,9 +16,7 @@ sink = CSVMetricSink(OUT_DIR / "metrics.csv")
 wm   = WatermarkGenerator(seed="key").bits(50000)
 
 ALGOS = [
-    PEEEmbedder(allow_partial=True),                                  # left-neighbour (default)
-    HSEmbedder(allow_partial=True),                                   # histogram shifting, left-neighbour
-    HSEmbedder(allow_partial=True, predictor=LagrangePredictor(2)),   # histogram shifting, Lagrange order 2
+    PEEEmbedder(allow_partial=True),
     ITBEmbedder(log_level=logging.INFO, metric_sink=sink, allow_partial=True),
     RCMEmbedder(block_len=1, log_level=logging.INFO, metric_sink=sink, allow_partial=True),
     RCMEmbedder(block_len=4, log_level=logging.INFO, metric_sink=sink, allow_partial=True),
